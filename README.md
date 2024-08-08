@@ -5,15 +5,11 @@ For accessing, saving, and intervening on NN activations, we use the [`nnsight`]
 Some dictionaries trained using this repository (and asociated training checkpoints) can be accessed at [https://baulab.us/u/smarks/autoencoders/](https://baulab.us/u/smarks/autoencoders/). See below for more information about these dictionaries.
 
 # Set-up
-
-Navigate to the to the location where you would like to clone this repo, clone and enter the repo, and install the requirements.
+from the root of the repository:
 ```bash
-git clone https://github.com/saprmarks/dictionary_learning
-cd dictionary_learning
 pip install -r requirements.txt
+pip install -e .
 ```
-
-To use `dictionary_learning`, include it as a subdirectory in some project's directory and import it; see the examples below.
 
 # Using trained dictionaries
 
@@ -69,65 +65,7 @@ Another key object is the `ActivationBuffer`, defined in `buffer.py`. Following 
 
 An `ActivationBuffer` is initialized from an `nnsight` `LanguageModel` object, a submodule (e.g. an MLP), and a generator which yields strings (the text data). It processes a large number of strings, up to some capacity, and saves the submodule's activations. You sample batches from it, and when it is half-depleted, it refreshes itself with new text data.
 
-Here's an example for training a dictionary; in it we load a language model as an `nnsight` `LanguageModel` (this will work for any Huggingface model), specify a submodule, create an `ActivationBuffer`, and then train an autoencoder with `trainSAE`.
-```python
-from nnsight import LanguageModel
-from dictionary_learning import ActivationBuffer
-from dictionary_learning.dictionary import AutoEncoder
-from dictionary_learning.trainers.standard import StandardTrainer
-from dictionary_learning.training import trainSAE
-
-sae_device = "cuda:0"
-activation_device = "cuda:0" # these can be the same but don't have to be
-lm_name = "EleutherAI/pythia-70m-deduped" # this can be any Huggingface model
-
-model = LanguageModel(
-    lm_name,
-    device_map=activation_device,
-)
-submodule = model.gpt_neox.layers[1].mlp # layer 1 MLP
-activation_dim = 512 # output dimension of the MLP
-dictionary_size = 16 * activation_dim
-
-# data must be an iterator that outputs strings
-data = iter(
-    [
-        "This is some example data",
-        "In real life, for training a dictionary",
-        "you would need much more data than this",
-    ]
-    * 10_000 # synthetically increase amount of toy data since training only runs 1 epoch
-)
-buffer = ActivationBuffer(
-    data=data,
-    model=model,
-    submodule=submodule,
-    d_submodule=activation_dim, # output dimension of the model component
-    n_ctxs=3e2,  # you can set this higher or lower dependong on your available memory
-    out_batch_size=256,
-    device=activation_device,
-)  # buffer will return batches of tensors of dimension = submodule's output dimension
-
-trainer_cfg = {
-    "trainer": StandardTrainer,
-    "dict_class": AutoEncoder,
-    "activation_dim": activation_dim,
-    "dict_size": dictionary_size,
-    "lr": 1e-3,
-    "seed": 0,
-    "wandb_name": "sae_test",
-    "layer": "mlp_1",  # name of the layer in the model, used for logging
-    "lm_name": lm_name,  # name of the model, used for logging
-    "device": sae_device,
-}
-
-# train the sparse autoencoder (SAE)
-ae = trainSAE(
-    data=buffer,  # you could also use another (i.e. pytorch dataloader) here instead of buffer
-    trainer_configs=[trainer_cfg],
-    steps=25,  # you'll want to increase this number in practice
-)
-```
+For an example for training a dictionary, see `scripts/test_sae_training.py`
 Some technical notes our training infrastructure and supported features:
 * Training uses the `ConstrainedAdam` optimizer defined in `training.py`. This is a variant of Adam which supports constraining the `AutoEncoder`'s decoder weights to be norm 1.
 * Neuron resampling: if a `resample_steps` argument is passed to `trainSAE`, then dead neurons will periodically be resampled according to the procedure specified [here](https://transformer-circuits.pub/2023/monosemantic-features/index.html#appendix-autoencoder-resampling).
@@ -140,7 +78,7 @@ If `submodule` is a model component where the activations are tuples (e.g. this 
 To download our pretrained dictionaries automatically, run:
 
 ```bash
-./pretrained_dictionary_downloader.sh
+./scripts/pretrained_dictionary_downloader.sh
 ```
 This will download dictionaries of all submodules (~2.5 GB) hosted on huggingface. Currently, we provide dictionaries from the `10_32768` training run. This set has dictionaries for MLP outputs, attention outputs, and residual streams (including embeddings) in all layers of EleutherAI's Pythia-70m-deduped model. These dictionaries were trained on 2B tokens from The Pile.
 
