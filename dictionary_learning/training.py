@@ -2,40 +2,44 @@
 Training dictionaries
 """
 
-import torch as t
-from .dictionary import AutoEncoder
-import os
-from tqdm import tqdm
-from .trainers.standard import StandardTrainer
-import wandb
 import json
+import os
+
+import torch as t
+import wandb
+from tqdm import tqdm
+
+from dictionary_learning.dictionary import AutoEncoder
+from dictionary_learning.trainers.standard import StandardTrainer
+
 # from .evaluation import evaluate
 
+
 def trainSAE(
-        data, 
-        trainer_configs = [
-            {
-                'trainer' : StandardTrainer,
-                'dict_class' : AutoEncoder,
-                'activation_dim' : 512,
-                'dict_size' : 64*512,
-                'lr' : 1e-3,
-                'l1_penalty' : 1e-1,
-                'warmup_steps' : 1000,
-                'resample_steps' : None,
-                'seed' : None,
-                'wandb_name' : 'StandardTrainer',
-            }
-        ],
-        use_wandb = False,
-        wandb_entity = "",
-        wandb_project = "",
-        steps=None,
-        save_steps=None,
-        save_dir=None, # use {run} to refer to wandb run
-        log_steps=None,
-        activations_split_by_head=False, # set to true if data is shape [batch, pos, num_head, head_dim/resid_dim]
-        transcoder=False,
+    data,
+    trainer_configs=[
+        {
+            "trainer": StandardTrainer,
+            "dict_class": AutoEncoder,
+            "activation_dim": 512,
+            "dict_size": 64 * 512,
+            "lr": 1e-3,
+            "l1_penalty": 1e-1,
+            "warmup_steps": 1000,
+            "resample_steps": None,
+            "seed": None,
+            "wandb_name": "StandardTrainer",
+        }
+    ],
+    use_wandb=False,
+    wandb_entity="",
+    wandb_project="",
+    steps=None,
+    save_steps=None,
+    save_dir=None,  # use {run} to refer to wandb run
+    log_steps=None,
+    activations_split_by_head=False,  # set to true if data is shape [batch, pos, num_head, head_dim/resid_dim]
+    transcoder=False,
 ):
     """
     Train SAEs using the given trainers
@@ -43,21 +47,19 @@ def trainSAE(
 
     trainers = []
     for config in trainer_configs:
-        trainer = config['trainer']
-        del config['trainer']
-        trainers.append(
-            trainer(
-                **config
-            )
-        )
-
+        trainer = config["trainer"]
+        del config["trainer"]
+        trainers.append(trainer(**config))
 
     if log_steps is not None:
         if use_wandb:
             wandb.init(
                 entity=wandb_entity,
                 project=wandb_project,
-                config={f'{trainer.config["wandb_name"]}-{i}' : trainer.config for i, trainer in enumerate(trainers)}
+                config={
+                    f'{trainer.config["wandb_name"]}-{i}': trainer.config
+                    for i, trainer in enumerate(trainers)
+                },
             )
             # process save_dir in light of run name
             if save_dir is not None:
@@ -65,19 +67,22 @@ def trainSAE(
 
     # make save dirs, export config
     if save_dir is not None:
-        save_dirs = [os.path.join(save_dir, f"trainer_{i}") for i in range(len(trainer_configs))]
+        save_dirs = [
+            os.path.join(save_dir, f"trainer_{i}") for i in range(len(trainer_configs))
+        ]
         for trainer, dir in zip(trainers, save_dirs):
             os.makedirs(dir, exist_ok=True)
             # save config
-            config = {'trainer' : trainer.config}
+            config = {"trainer": trainer.config}
             try:
-                config['buffer'] = data.config
-            except: pass
-            with open(os.path.join(dir, "config.json"), 'w') as f:
+                config["buffer"] = data.config
+            except:
+                pass
+            with open(os.path.join(dir, "config.json"), "w") as f:
                 json.dump(config, f, indent=4)
     else:
         save_dirs = [None for _ in trainer_configs]
-    
+
     for step, act in enumerate(tqdm(data, total=steps)):
         if steps is not None and step >= steps:
             break
@@ -92,21 +97,29 @@ def trainSAE(
                 z = act.clone()
                 for i, trainer in enumerate(trainers):
                     act = z.clone()
-                    if activations_split_by_head: # x.shape: [batch, pos, n_heads, d_head]
-                        act = act[..., i, :] 
+                    if (
+                        activations_split_by_head
+                    ):  # x.shape: [batch, pos, n_heads, d_head]
+                        act = act[..., i, :]
                     trainer_name = f'{trainer.config["wandb_name"]}-{i}'
                     if not transcoder:
-                        act, act_hat, f, losslog = trainer.loss(act, step=step, logging=True) # act is x
+                        act, act_hat, f, losslog = trainer.loss(
+                            act, step=step, logging=True
+                        )  # act is x
 
                         # L0
                         l0 = (f != 0).float().sum(dim=-1).mean().item()
                         # fraction of variance explained
                         total_variance = t.var(act, dim=0).sum()
                         residual_variance = t.var(act - act_hat, dim=0).sum()
-                        frac_variance_explained = (1 - residual_variance / total_variance)
-                        log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
-                    else: # transcoder
-                        x, x_hat, f, losslog = trainer.loss(act, step=step, logging=True) # act is x, y
+                        frac_variance_explained = 1 - residual_variance / total_variance
+                        log[f"{trainer_name}/frac_variance_explained"] = (
+                            frac_variance_explained.item()
+                        )
+                    else:  # transcoder
+                        x, x_hat, f, losslog = trainer.loss(
+                            act, step=step, logging=True
+                        )  # act is x, y
 
                         # L0
                         l0 = (f != 0).float().sum(dim=-1).mean().item()
@@ -118,17 +131,17 @@ def trainSAE(
                         # frac_variance_explained = (1 - residual_variance / total_variance)
                         # log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
 
-                    # log parameters from training 
-                    log.update({f'{trainer_name}/{k}' : v for k, v in losslog.items()})
-                    log[f'{trainer_name}/l0'] = l0
+                    # log parameters from training
+                    log.update({f"{trainer_name}/{k}": v for k, v in losslog.items()})
+                    log[f"{trainer_name}/l0"] = l0
                     trainer_log = trainer.get_logging_parameters()
                     for name, value in trainer_log.items():
-                        log[f'{trainer_name}/{name}'] = value
+                        log[f"{trainer_name}/{name}"] = value
 
                     # TODO get this to work
                     # metrics = evaluate(
-                    #     trainer.ae, 
-                    #     data, 
+                    #     trainer.ae,
+                    #     data,
                     #     device=trainer.device
                     # )
                     # log.update(
@@ -144,14 +157,14 @@ def trainSAE(
                     if not os.path.exists(os.path.join(dir, "checkpoints")):
                         os.mkdir(os.path.join(dir, "checkpoints"))
                     t.save(
-                        trainer.ae.state_dict(), 
-                        os.path.join(dir, "checkpoints", f"ae_{step}.pt")
-                        )
-                    
+                        trainer.ae.state_dict(),
+                        os.path.join(dir, "checkpoints", f"ae_{step}.pt"),
+                    )
+
         # training
         for trainer in trainers:
             trainer.update(step, act)
-    
+
     # save final SAEs
     for save_dir, trainer in zip(save_dirs, trainers):
         if save_dir is not None:
