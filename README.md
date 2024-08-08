@@ -1,4 +1,4 @@
-This is a repository for doing dictionary learning via sparse autoencoders on neural network activations. It was developed by Samuel Marks and Aaron Mueller. 
+This is a repository for doing dictionary learning via sparse autoencoders on neural network activations. It was developed by Samuel Marks and Aaron Mueller.
 
 For accessing, saving, and intervening on NN activations, we use the [`nnsight`](http://nnsight.net/) package; as of March 2024, `nnsight` is under active development and may undergo breaking changes. That said, `nnsight` is easy to use and quick to learn; if you plan to modify this repo, then we recommend going through the main `nnsight` demo [here](https://nnsight.net/notebooks/tutorials/walkthrough/).
 
@@ -125,7 +125,7 @@ trainer_cfg = {
 ae = trainSAE(
     data=buffer,  # you could also use another (i.e. pytorch dataloader) here instead of buffer
     trainer_configs=[trainer_cfg],
-    steps=25,  # you'll want to increase this number in practi
+    steps=25,  # you'll want to increase this number in practice
 )
 ```
 Some technical notes our training infrastructure and supported features:
@@ -149,7 +149,7 @@ Let's explain the directory structure by example. After using the script above, 
 * `config.json`: a json file which specifies the hyperparameters used to train the dictionary
 * `checkpoints/`: a directory containing training checkpoints of the form `ae_step.pt` (only if you used the `--checkpoints` flag)
 
-We've also previously released other dictionaries which can be found and downloaded [here](https://baulab.us/u/smarks/autoencoders/). 
+We've also previously released other dictionaries which can be found and downloaded [here](https://baulab.us/u/smarks/autoencoders/).
 
 ## Statistics for our dictionaries
 
@@ -212,6 +212,4 @@ We've included support for some experimental features. We briefly investigated t
     * To use this functionality, set the `io` parameter of an activaiton buffer to `'in_to_out'` (default is `'out'`).
     * h/t to Max Li for this suggestion.
 * **Replacing L1 loss with entropy**. Based on the ideas in this [post](https://transformer-circuits.pub/2023/may-update/index.html#simple-factorization), we experimented with using entropy to regularize a dictionary's hidden state instead of L1 loss. This seemed to cause the features to split into dead features (which never fired) and very high-frequency features which fired on nearly every input, which was not the desired behavior. But plausibly there is a way to make this work better.
-* **Ghost grads**, as described [here](https://transformer-circuits.pub/2024/jan-update/index.html). 
-
-
+* **Ghost grads**, as described [here](https://transformer-circuits.pub/2024/jan-update/index.html).
