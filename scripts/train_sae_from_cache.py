@@ -14,15 +14,15 @@ from dictionary_learning.utils import get_device
 def load_activations(
     activation_cache_dir: Path = Path("activation_cache"),
     save_dir: str = "sae_output",
-    batch_size=64,
+    batch_size: int = 64,
     lr: float = 1e-3,
     seed: int = 0,
     use_wandb: bool = False,
-    wandb_entity="ElanaPearl",
-    wandb_project="sae_training",
-    wandb_name="tmp_run_name",
-    lm_name="",
-    layer="final_rs",
+    wandb_entity: str = "ElanaPearl",
+    wandb_project: str = "sae_training",
+    wandb_name: str = "tmp_run_name",  # used for wandb logging
+    lm_name: str = "",  # used for wandb logging
+    layer: str = "final_rs",  # used for wandb logging
     steps: int = 100_000,
     log_steps: int = 100,
 ):

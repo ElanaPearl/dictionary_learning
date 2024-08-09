@@ -166,7 +166,9 @@ def custom_str_collate(batch: list[list[str]]) -> list[str]:
 
 
 class SingleTokenDataset(Dataset):
-    def __init__(self, filename, total_tokens, d_model, dtype="float32"):
+    def __init__(
+        self, filename: str, total_tokens: int, d_model: int, dtype: str = "float32"
+    ):
         self.memmap = np.memmap(
             filename, dtype=dtype, mode="r", shape=(total_tokens, d_model)
         )
@@ -176,9 +178,10 @@ class SingleTokenDataset(Dataset):
     def __len__(self):
         return self.total_tokens
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> torch.Tensor:
+        # Have to copy the data because memmap arrays are read-only and
+        # PyTorch complains if we try to use them directly
         return torch.as_tensor(self.memmap[idx].copy()).float()
-        # return torch.from_numpy(self.memmap[idx]).float()
 
 
 def get_activation_dataset_from_cache(activations_dir: Path) -> SingleTokenDataset:
