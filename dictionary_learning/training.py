@@ -53,6 +53,9 @@ def trainSAE(
 
     if log_steps is not None:
         if use_wandb:
+            check_for_necessary_wandb_args(wandb_entity, wandb_project, log_steps)
+            for trainer_cfg in trainer_configs:
+                check_for_optional_wandb_args(trainer_cfg)
             wandb.init(
                 entity=wandb_entity,
                 project=wandb_project,
@@ -85,6 +88,7 @@ def trainSAE(
 
     for step, act in enumerate(tqdm(data, total=steps)):
         if steps is not None and step >= steps:
+            print("Stopped training because reached max specified steps")
             break
 
         # logging
@@ -94,9 +98,9 @@ def trainSAE(
 
                 # quick hack to make sure all trainers get the same x
                 # TODO make this less hacky
-                z = act.clone()
+                z = act.clone().to(trainers[0].device)
                 for i, trainer in enumerate(trainers):
-                    act = z.clone()
+                    act = z.clone().to(trainer.device)
                     if (
                         activations_split_by_head
                     ):  # x.shape: [batch, pos, n_heads, d_head]
@@ -173,3 +177,42 @@ def trainSAE(
     # End the wandb run
     if log_steps is not None and use_wandb:
         wandb.finish()
+
+
+def check_for_necessary_wandb_args(wandb_entity, wandb_project, log_steps):
+    """
+    Check if necessary arguments are present for logging to wandb.
+
+    Raises:
+        ValueError: If any necessary arguments are missing.
+    """
+    necessary_args = {
+        "wandb_entity": wandb_entity,
+        "wandb_project": wandb_project,
+        "log_steps": log_steps,
+    }
+
+    missing_args = [arg for arg, value in necessary_args.items() if not value]
+
+    if missing_args:
+        raise ValueError(
+            "In order to log your run to wandb, you must specify the following arguments:\n"
+            + "\n".join(f"* {arg}" for arg in missing_args)
+        )
+
+
+def check_for_optional_wandb_args(trainer_cfg):
+    """
+    Check if helpful but optional arguments are present for logging to wandb.
+
+    Prints a warning if any optional arguments are missing.
+    """
+    optional_args = ["wandb_name", "layer", "lm_name"]
+    missing_args = [arg for arg in optional_args if arg not in trainer_cfg]
+
+    if missing_args:
+        print(
+            "Warning: You are missing the following optional arguments from trainer_cfg:\n"
+            + "\n".join(f"* {arg}" for arg in missing_args)
+            + "\nIt will still log your run, but these are useful for tracking purposes."
+        )

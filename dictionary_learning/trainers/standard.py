@@ -56,7 +56,7 @@ class StandardTrainer(SAETrainer):
     ):
         super().__init__(seed)
 
-        assert layer is not None and lm_name is not None
+        # assert layer is not None and lm_name is not None
         self.layer = layer
         self.lm_name = lm_name
         self.submodule_name = submodule_name
