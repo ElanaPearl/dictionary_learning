@@ -167,13 +167,14 @@ def custom_str_collate(batch: list[list[str]]) -> list[str]:
 
 class SingleTokenDataset(Dataset):
     def __init__(
-        self, filename: str, total_tokens: int, d_model: int, dtype: str = "float32"
+        self, filename: str, total_tokens: int, d_model: int, dtype: str = "float32", device="cpu"
     ):
         self.memmap = np.memmap(
             filename, dtype=dtype, mode="r", shape=(total_tokens, d_model)
         )
         self.total_tokens = total_tokens
         self.d_model = d_model
+        self.device = device
 
     def __len__(self):
         return self.total_tokens
@@ -181,10 +182,10 @@ class SingleTokenDataset(Dataset):
     def __getitem__(self, idx: int) -> torch.Tensor:
         # Have to copy the data because memmap arrays are read-only and
         # PyTorch complains if we try to use them directly
-        return torch.as_tensor(self.memmap[idx].copy()).float()
+        return torch.as_tensor(self.memmap[idx].copy()).float().to(device=self.device)
 
 
-def get_activation_dataset_from_cache(activations_dir: Path) -> SingleTokenDataset:
+def get_activation_dataset_from_cache(activations_dir: Path, device="cpu") -> SingleTokenDataset:
     """Load a SingleTokenDataset from a directory containing cached activations."""
 
     activations_dir = Path(activations_dir)
@@ -197,6 +198,6 @@ def get_activation_dataset_from_cache(activations_dir: Path) -> SingleTokenDatas
     total_tokens = metadata["total_tokens"]
     d_model = metadata["d_model"]
 
-    dataset = SingleTokenDataset(activations_path, total_tokens, d_model)
+    dataset = SingleTokenDataset(activations_path, total_tokens, d_model, device=device)
 
     return dataset
