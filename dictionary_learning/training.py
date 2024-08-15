@@ -40,6 +40,7 @@ def trainSAE(
     log_steps=None,
     activations_split_by_head=False,  # set to true if data is shape [batch, pos, num_head, head_dim/resid_dim]
     transcoder=False,
+    fidelity_fn=None, # This has to be defined in the script that calls this
 ):
     """
     Train SAEs using the given trainers
@@ -142,6 +143,13 @@ def trainSAE(
                     for name, value in trainer_log.items():
                         log[f"{trainer_name}/{name}"] = value
 
+                    if fidelity_fn is not None:
+                        # Note, we assume function takes activations and returns a dict
+                        # TODO: make a fidelity_fn super class that follows this API
+                        fidelity = fidelity_fn(act=act,
+                        act_hat=act_hat)
+                        for k, v in fidelity.items():
+                            log[f"{trainer_name}/{k}"] = v
                     # TODO get this to work
                     # metrics = evaluate(
                     #     trainer.ae,
