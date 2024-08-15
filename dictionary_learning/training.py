@@ -9,7 +9,7 @@ import torch as t
 import wandb
 from tqdm import tqdm
 
-from dictionary_learning.dictionary import AutoEncoder
+from dictionary_learning.dictionary import AutoEncoderNew
 from dictionary_learning.trainers.standard import StandardTrainer
 
 # from .evaluation import evaluate
@@ -20,7 +20,7 @@ def trainSAE(
     trainer_configs=[
         {
             "trainer": StandardTrainer,
-            "dict_class": AutoEncoder,
+            "dict_class": AutoEncoderNew,
             "activation_dim": 512,
             "dict_size": 64 * 512,
             "lr": 1e-3,
