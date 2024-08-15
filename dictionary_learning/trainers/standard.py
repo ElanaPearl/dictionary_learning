@@ -90,7 +90,7 @@ class StandardTrainer(SAETrainer):
             self.steps_since_active = None
 
         self.optimizer = ConstrainedAdam(
-            self.ae.parameters(), self.ae.decoder.parameters(), lr=lr
+            params=self.ae.parameters(), constrained_params=self.ae.decoder.parameters(), lr=lr
         )
         if resample_steps is None:
 
@@ -105,6 +105,7 @@ class StandardTrainer(SAETrainer):
         self.scheduler = t.optim.lr_scheduler.LambdaLR(
             self.optimizer, lr_lambda=warmup_fn
         )
+
 
     def resample_neurons(self, deads, activations):
         with t.no_grad():
@@ -142,6 +143,20 @@ class StandardTrainer(SAETrainer):
             ## decoder weight
             state_dict[3]["exp_avg"][:, deads] = 0.0
             state_dict[3]["exp_avg_sq"][:, deads] = 0.0
+
+    @property
+    def current_lr(self):
+        """ Return curent optimizer learning rate"""
+        return self.optimizer.param_groups[0]["lr"]
+
+    @property
+    def current_l1_penalty(self):
+        """ Return current l1 penalty (lambda)"""
+        return self.l1_penalty
+
+    def get_extra_logging_parameters(self):
+        return {"lr": self.current_lr, "l1_penalty": self.current_l1_penalty}
+
 
     def loss(self, x, logging=False, **kwargs):
         x_hat, f = self.ae(x, output_features=True)

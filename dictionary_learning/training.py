@@ -87,6 +87,7 @@ def trainSAE(
     else:
         save_dirs = [None for _ in trainer_configs]
 
+    n_tokens_total = 0
     for step, act in enumerate(tqdm(data, total=steps)):
         if steps is not None and step >= steps:
             print("Stopped training because reached max specified steps")
@@ -140,6 +141,7 @@ def trainSAE(
                     log.update({f"{trainer_name}/{k}": v for k, v in losslog.items()})
                     log[f"{trainer_name}/l0"] = l0
                     trainer_log = trainer.get_logging_parameters()
+                    trainer_log.update(trainer.get_extra_logging_parameters())
                     for name, value in trainer_log.items():
                         log[f"{trainer_name}/{name}"] = value
 
@@ -150,6 +152,14 @@ def trainSAE(
                         act_hat=act_hat)
                         for k, v in fidelity.items():
                             log[f"{trainer_name}/{k}"] = v
+
+                    # add in the mean and std of act and act_hat
+                    log[f"{trainer_name}/act_mean"] = act.mean().item()
+                    log[f"{trainer_name}/act_std"] = act.std().item()
+                    log[f"{trainer_name}/reconstruction_mean"] = act_hat.mean().item()
+                    log[f"{trainer_name}/reconstruction_std"] = act_hat.std(dim=1).mean().item()
+                    log["tokens"] = n_tokens_total
+
                     # TODO get this to work
                     # metrics = evaluate(
                     #     trainer.ae,
@@ -176,6 +186,9 @@ def trainSAE(
         # training
         for trainer in trainers:
             trainer.update(step, act)
+
+        # update n_tokens_total
+        n_tokens_total += act.shape[0]
 
     # save final SAEs
     for save_dir, trainer in zip(save_dirs, trainers):
