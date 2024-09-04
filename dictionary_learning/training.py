@@ -46,6 +46,7 @@ def trainSAE(
 
     trainer_cls = trainer_config["trainer"]
     trainer_config = {k: v for k, v in trainer_config.items() if k != "trainer"}
+    trainer_config["steps"] = steps
     trainer = trainer_cls(**trainer_config)
 
     if log_steps is not None:
@@ -56,6 +57,7 @@ def trainSAE(
                 entity=wandb_entity,
                 project=wandb_project,
                 config=trainer_config,
+                name=trainer_config["wandb_name"],
             )
             # process save_dir in light of run name
             if save_dir is not None:

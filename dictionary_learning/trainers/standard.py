@@ -37,7 +37,6 @@ class StandardTrainer(SAETrainer):
     """
     Standard SAE training scheme.
     """
-
     def __init__(
         self,
         dict_class=AutoEncoder,
@@ -46,6 +45,8 @@ class StandardTrainer(SAETrainer):
         lr=1e-3,
         l1_penalty=1e-1,
         warmup_steps=1000,  # lr warmup period at start of training and after each resample
+        l1_annealing_pct=0,
+        steps=None,  # total number of steps to train for
         resample_steps=None,  # how often to resample neurons
         seed=None,
         device=None,
@@ -69,7 +70,6 @@ class StandardTrainer(SAETrainer):
         self.ae = dict_class(activation_dim, dict_size)
 
         self.lr = lr
-        self.l1_penalty = l1_penalty
         self.warmup_steps = warmup_steps
         self.wandb_name = wandb_name
 
@@ -106,6 +106,16 @@ class StandardTrainer(SAETrainer):
             self.optimizer, lr_lambda=warmup_fn
         )
 
+
+        self.final_l1_penalty = l1_penalty
+        self.l1_annealing_steps = int(l1_annealing_pct * steps) if l1_annealing_pct > 0 else 0
+        self.current_l1_penalty = 0 if self.l1_annealing_steps > 0 else l1_penalty
+
+    def update_l1_penalty(self, step):
+        if step < self.l1_annealing_steps:
+            self.current_l1_penalty = self.final_l1_penalty * (step / self.l1_annealing_steps)
+        else:
+            self.current_l1_penalty = self.final_l1_penalty
 
     def resample_neurons(self, deads, activations):
         with t.no_grad():
@@ -149,15 +159,8 @@ class StandardTrainer(SAETrainer):
         """ Return curent optimizer learning rate"""
         return self.optimizer.param_groups[0]["lr"]
 
-    @property
-    def current_l1_penalty(self):
-        """ Return current l1 penalty (lambda)"""
-        return self.l1_penalty
-
     def get_extra_logging_parameters(self):
         return {"lr": self.current_lr, "l1_penalty": self.current_l1_penalty}
-
-
     def loss(self, x, logging=False, **kwargs):
         x_hat, f = self.ae(x, output_features=True)
         l2_loss = t.linalg.norm(x - x_hat, dim=-1).mean()
@@ -169,7 +172,8 @@ class StandardTrainer(SAETrainer):
             self.steps_since_active[deads] += 1
             self.steps_since_active[~deads] = 0
 
-        loss = l2_loss + self.l1_penalty * l1_loss
+
+        loss = l2_loss + self.current_l1_penalty * l1_loss
 
         if not logging:
             return loss
@@ -187,6 +191,9 @@ class StandardTrainer(SAETrainer):
             )
 
     def update(self, step, activations):
+        if self.l1_annealing_steps > 0:
+            self.update_l1_penalty(step)  # Update L1 penalty before computing loss
+
         activations = activations.to(self.device)
 
         self.optimizer.zero_grad()
@@ -208,7 +215,8 @@ class StandardTrainer(SAETrainer):
             "activation_dim": self.ae.activation_dim,
             "dict_size": self.ae.dict_size,
             "lr": self.lr,
-            "l1_penalty": self.l1_penalty,
+            "l1_penalty": self.final_l1_penalty,
+            "l1_annealing_steps": self.l1_annealing_steps,
             "warmup_steps": self.warmup_steps,
             "resample_steps": self.resample_steps,
             "device": self.device,
