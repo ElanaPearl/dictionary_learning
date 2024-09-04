@@ -91,9 +91,10 @@ def trainSAE(
                     )  # act is x
 
                     # L0: avg number of non-zero features
-                    l0 = (f != 0).float().sum(dim=-1).mean().item() 
-                    # L0_norm: avg pct of non-zero features
-                    l0_norm = l0 / act.shape[-1] * 100
+                    n_nonzero_per_example = (f != 0).float().sum(dim=-1)
+                    l0 = n_nonzero_per_example.mean().item() 
+                    # L0_norm: avg pct of non-zero features per example
+                    l0_norm = (n_nonzero_per_example / trainer_config["dict_size"]).mean().item() * 100
                     
                     # fraction of variance explained
                     total_variance = t.var(act, dim=0).sum()
