@@ -90,8 +90,11 @@ def trainSAE(
                         act, step=step, logging=True
                     )  # act is x
 
-                    # L0
-                    l0 = (f != 0).float().sum(dim=-1).mean().item()
+                    # L0: avg number of non-zero features
+                    l0 = (f != 0).float().sum(dim=-1).mean().item() 
+                    # L0_norm: avg pct of non-zero features
+                    l0_norm = l0 / act.shape[-1] * 100
+                    
                     # fraction of variance explained
                     total_variance = t.var(act, dim=0).sum()
                     residual_variance = t.var(act - act_hat, dim=0).sum()
@@ -112,9 +115,15 @@ def trainSAE(
                     # frac_variance_explained = (1 - residual_variance / total_variance)
                     # log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
 
+                # check if losslog has NaN and stop
+                if losslog["loss"] != losslog["loss"]:
+                    print("Oh no, NaN loss!!")
+                    breakpoint()
+
                 # log parameters from training
                 log.update(losslog)
                 log["l0"] = l0
+                log["l0_pct_nonzero"] = l0_norm
                 trainer_log = trainer.get_logging_parameters()
                 trainer_log.update(trainer.get_extra_logging_parameters())
                 for name, value in trainer_log.items():
