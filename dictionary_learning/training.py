@@ -17,53 +17,48 @@ from dictionary_learning.trainers.standard import StandardTrainer
 
 def trainSAE(
     data,
-    trainer_configs=[
-        {
-            "trainer": StandardTrainer,
-            "dict_class": AutoEncoderNew,
-            "activation_dim": 512,
-            "dict_size": 64 * 512,
-            "lr": 1e-3,
-            "l1_penalty": 1e-1,
-            "warmup_steps": 1000,
-            "resample_steps": None,
-            "seed": None,
-            "wandb_name": "StandardTrainer",
-        }
-    ],
+    trainer_config={
+        "trainer": StandardTrainer,
+        "dict_class": AutoEncoderNew,
+        "activation_dim": 512,
+        "dict_size": 64 * 512,
+        "lr": 1e-3,
+        "l1_penalty": 1e-1,
+        "warmup_steps": 1000,
+        "resample_steps": None,
+        "seed": None,
+        "wandb_name": "StandardTrainer",
+    },
     use_wandb=False,
     wandb_entity="",
     wandb_project="",
     steps=None,
     save_steps=None,
+    max_ckpts_to_keep=3,
     save_dir=None,  # use {run} to refer to wandb run
     log_steps=None,
     activations_split_by_head=False,  # set to true if data is shape [batch, pos, num_head, head_dim/resid_dim]
     transcoder=False,
-    fidelity_fn=None, # This has to be defined in the script that calls this
+    fidelity_fn=None,  # This has to be defined in the script that calls this
 ):
     """
     Train SAEs using the given trainers
     """
 
-    trainers = []
-    for config in trainer_configs:
-        trainer = config["trainer"]
-        del config["trainer"]
-        trainers.append(trainer(**config))
+    trainer_cls = trainer_config["trainer"]
+    trainer_config = {k: v for k, v in trainer_config.items() if k != "trainer"}
+    trainer_config["steps"] = steps
+    trainer = trainer_cls(**trainer_config)
 
     if log_steps is not None:
         if use_wandb:
             check_for_necessary_wandb_args(wandb_entity, wandb_project, log_steps)
-            for trainer_cfg in trainer_configs:
-                check_for_optional_wandb_args(trainer_cfg)
+            check_for_optional_wandb_args(trainer_config)
             wandb.init(
                 entity=wandb_entity,
                 project=wandb_project,
-                config={
-                    f'{trainer.config["wandb_name"]}-{i}': trainer.config
-                    for i, trainer in enumerate(trainers)
-                },
+                config=trainer_config,
+                name=trainer_config["wandb_name"],
             )
             # process save_dir in light of run name
             if save_dir is not None:
@@ -71,21 +66,19 @@ def trainSAE(
 
     # make save dirs, export config
     if save_dir is not None:
-        save_dirs = [
-            os.path.join(save_dir, f"trainer_{i}") for i in range(len(trainer_configs))
-        ]
-        for trainer, dir in zip(trainers, save_dirs):
-            os.makedirs(dir, exist_ok=True)
-            # save config
-            config = {"trainer": trainer.config}
-            try:
-                config["buffer"] = data.config
-            except:
-                pass
-            with open(os.path.join(dir, "config.json"), "w") as f:
-                json.dump(config, f, indent=4)
-    else:
-        save_dirs = [None for _ in trainer_configs]
+        os.makedirs(save_dir, exist_ok=True)
+        # save config
+        config = {"trainer": trainer.config}
+        try:
+            config["buffer"] = data.config
+        except:
+            pass
+        with open(os.path.join(save_dir, "config.json"), "w") as f:
+            json.dump(config, f, indent=4)
+
+        if save_steps is not None:
+            os.makedirs(os.path.join(save_dir, "checkpoints"), exist_ok=True)
+            saved_steps = set()
 
     n_tokens_total = 0
     for step, act in enumerate(tqdm(data, total=steps)):
@@ -97,103 +90,101 @@ def trainSAE(
         if log_steps is not None and step % log_steps == 0:
             log = {}
             with t.no_grad():
+                if not transcoder:
+                    act, act_hat, f, losslog = trainer.loss(
+                        act, step=step, logging=True
+                    )  # act is x
 
-                # quick hack to make sure all trainers get the same x
-                # TODO make this less hacky
-                z = act.clone().to(trainers[0].device)
-                for i, trainer in enumerate(trainers):
-                    act = z.clone().to(trainer.device)
-                    if (
-                        activations_split_by_head
-                    ):  # x.shape: [batch, pos, n_heads, d_head]
-                        act = act[..., i, :]
-                    trainer_name = f'{trainer.config["wandb_name"]}-{i}'
-                    if not transcoder:
-                        act, act_hat, f, losslog = trainer.loss(
-                            act, step=step, logging=True
-                        )  # act is x
+                    # L0: avg number of non-zero features
+                    n_nonzero_per_example = (f != 0).float().sum(dim=-1)
+                    l0 = n_nonzero_per_example.mean().item() 
+                    # L0_norm: avg pct of non-zero features per example
+                    l0_norm = (n_nonzero_per_example / trainer_config["dict_size"]).mean().item() * 100
+                    
+                    # fraction of variance explained
+                    total_variance = t.var(act, dim=0).sum()
+                    residual_variance = t.var(act - act_hat, dim=0).sum()
+                    frac_variance_explained = 1 - residual_variance / total_variance
+                    log["frac_variance_explained"] = frac_variance_explained.item()
+                else:  # transcoder
+                    x, x_hat, f, losslog = trainer.loss(
+                        act, step=step, logging=True
+                    )  # act is x, y
 
-                        # L0
-                        l0 = (f != 0).float().sum(dim=-1).mean().item()
-                        # fraction of variance explained
-                        total_variance = t.var(act, dim=0).sum()
-                        residual_variance = t.var(act - act_hat, dim=0).sum()
-                        frac_variance_explained = 1 - residual_variance / total_variance
-                        log[f"{trainer_name}/frac_variance_explained"] = (
-                            frac_variance_explained.item()
-                        )
-                    else:  # transcoder
-                        x, x_hat, f, losslog = trainer.loss(
-                            act, step=step, logging=True
-                        )  # act is x, y
+                    # L0
+                    l0 = (f != 0).float().sum(dim=-1).mean().item()
 
-                        # L0
-                        l0 = (f != 0).float().sum(dim=-1).mean().item()
+                    # fraction of variance explained
+                    # TODO: adapt for transcoder
+                    # total_variance = t.var(x, dim=0).sum()
+                    # residual_variance = t.var(x - x_hat, dim=0).sum()
+                    # frac_variance_explained = (1 - residual_variance / total_variance)
+                    # log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
 
-                        # fraction of variance explained
-                        # TODO: adapt for transcoder
-                        # total_variance = t.var(x, dim=0).sum()
-                        # residual_variance = t.var(x - x_hat, dim=0).sum()
-                        # frac_variance_explained = (1 - residual_variance / total_variance)
-                        # log[f'{trainer_name}/frac_variance_explained'] = frac_variance_explained.item()
+                # check if losslog has NaN and stop
+                if losslog["loss"] != losslog["loss"]:
+                    print("Oh no, NaN loss!!")
+                    breakpoint()
 
-                    # log parameters from training
-                    log.update({f"{trainer_name}/{k}": v for k, v in losslog.items()})
-                    log[f"{trainer_name}/l0"] = l0
-                    trainer_log = trainer.get_logging_parameters()
-                    trainer_log.update(trainer.get_extra_logging_parameters())
-                    for name, value in trainer_log.items():
-                        log[f"{trainer_name}/{name}"] = value
+                # log parameters from training
+                log.update(losslog)
+                log["l0"] = l0
+                log["l0_pct_nonzero"] = l0_norm
+                trainer_log = trainer.get_logging_parameters()
+                trainer_log.update(trainer.get_extra_logging_parameters())
+                for name, value in trainer_log.items():
+                    log[name] = value
 
-                    if fidelity_fn is not None:
-                        # Note, we assume function takes activations and returns a dict
-                        # TODO: make a fidelity_fn super class that follows this API
-                        fidelity = fidelity_fn(act=act,
-                        act_hat=act_hat)
-                        for k, v in fidelity.items():
-                            log[f"{trainer_name}/{k}"] = v
+                if fidelity_fn is not None:
+                    # Note, we assume function takes activations and returns a dict
+                    # TODO: make a fidelity_fn super class that follows this API
+                    fidelity = fidelity_fn(act=act, act_hat=act_hat)
+                    for k, v in fidelity.items():
+                        log[k] = v
 
-                    # add in the mean and std of act and act_hat
-                    log[f"{trainer_name}/act_mean"] = act.mean().item()
-                    log[f"{trainer_name}/act_std"] = act.std().item()
-                    log[f"{trainer_name}/reconstruction_mean"] = act_hat.mean().item()
-                    log[f"{trainer_name}/reconstruction_std"] = act_hat.std(dim=1).mean().item()
-                    log["tokens"] = n_tokens_total
+                # add in the mean and std of act and act_hat
+                log["act_mean"] = act.mean().item()
+                log["act_std"] = act.std().item()
+                log["reconstruction_mean"] = act_hat.mean().item()
+                log["reconstruction_std"] = act_hat.std(dim=1).mean().item()
+                log["tokens"] = n_tokens_total
 
-                    # TODO get this to work
-                    # metrics = evaluate(
-                    #     trainer.ae,
-                    #     data,
-                    #     device=trainer.device
-                    # )
-                    # log.update(
-                    #     {f'trainer{i}/{k}' : v for k, v in metrics.items()}
-                    # )
+                # TODO get this to work
+                # metrics = evaluate(
+                #     trainer.ae,
+                #     data,
+                #     device=trainer.device
+                # )
+                # log.update(
+                #     {f'trainer{i}/{k}' : v for k, v in metrics.items()}
+                # )
             if use_wandb:
                 wandb.log(log, step=step)
 
         # saving
-        if save_steps is not None and step % save_steps == 0:
-            for dir, trainer in zip(save_dirs, trainers):
-                if dir is not None:
-                    if not os.path.exists(os.path.join(dir, "checkpoints")):
-                        os.mkdir(os.path.join(dir, "checkpoints"))
-                    t.save(
-                        trainer.ae.state_dict(),
-                        os.path.join(dir, "checkpoints", f"ae_{step}.pt"),
-                    )
+        if save_steps is not None and step % save_steps == 0: 
+            t.save(
+                trainer.ae.state_dict(),
+                os.path.join(save_dir, "checkpoints", f"ae_{step}.pt"),
+            )
+            # add step to the set saved_steps
+            saved_steps.add(step)
+
+            # if there are more than the max files, delete the one with the smallest step
+            if len(saved_steps) > max_ckpts_to_keep:
+                min_step = min(saved_steps)
+                saved_steps.remove(min_step)
+                os.remove(os.path.join(save_dir, "checkpoints", f"ae_{min_step}.pt"))
 
         # training
-        for trainer in trainers:
-            trainer.update(step, act)
+        trainer.update(step, act)
 
         # update n_tokens_total
         n_tokens_total += act.shape[0]
 
     # save final SAEs
-    for save_dir, trainer in zip(save_dirs, trainers):
-        if save_dir is not None:
-            t.save(trainer.ae.state_dict(), os.path.join(save_dir, "ae.pt"))
+    if save_dir is not None:
+        t.save(trainer.ae.state_dict(), os.path.join(save_dir, "ae.pt"))
 
     # End the wandb run
     if log_steps is not None and use_wandb:
