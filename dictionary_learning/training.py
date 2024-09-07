@@ -34,6 +34,7 @@ def trainSAE(
     wandb_project="",
     steps=None,
     save_steps=None,
+    max_ckpts_to_keep=3,
     save_dir=None,  # use {run} to refer to wandb run
     log_steps=None,
     activations_split_by_head=False,  # set to true if data is shape [batch, pos, num_head, head_dim/resid_dim]
@@ -74,6 +75,10 @@ def trainSAE(
             pass
         with open(os.path.join(save_dir, "config.json"), "w") as f:
             json.dump(config, f, indent=4)
+
+        if save_steps is not None:
+            os.makedirs(os.path.join(save_dir, "checkpoints"), exist_ok=True)
+            saved_steps = set()
 
     n_tokens_total = 0
     for step, act in enumerate(tqdm(data, total=steps)):
@@ -157,14 +162,19 @@ def trainSAE(
                 wandb.log(log, step=step)
 
         # saving
-        if save_steps is not None and step % save_steps == 0:
-            if save_dir is not None:
-                if not os.path.exists(os.path.join(dir, "checkpoints")):
-                    os.mkdir(os.path.join(dir, "checkpoints"))
-                t.save(
-                    trainer.ae.state_dict(),
-                    os.path.join(dir, "checkpoints", f"ae_{step}.pt"),
-                )
+        if save_steps is not None and step % save_steps == 0: 
+            t.save(
+                trainer.ae.state_dict(),
+                os.path.join(save_dir, "checkpoints", f"ae_{step}.pt"),
+            )
+            # add step to the set saved_steps
+            saved_steps.add(step)
+
+            # if there are more than the max files, delete the one with the smallest step
+            if len(saved_steps) > max_ckpts_to_keep:
+                min_step = min(saved_steps)
+                saved_steps.remove(min_step)
+                os.remove(os.path.join(save_dir, "checkpoints", f"ae_{min_step}.pt"))
 
         # training
         trainer.update(step, act)
