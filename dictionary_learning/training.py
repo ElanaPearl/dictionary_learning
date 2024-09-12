@@ -40,6 +40,8 @@ def trainSAE(
     activations_split_by_head=False,  # set to true if data is shape [batch, pos, num_head, head_dim/resid_dim]
     transcoder=False,
     fidelity_fn=None,  # This has to be defined in the script that calls this
+    eval_steps=None,
+    additional_wandb_args={},
 ):
     """
     Train SAEs using the given trainers
@@ -54,10 +56,14 @@ def trainSAE(
         if use_wandb:
             check_for_necessary_wandb_args(wandb_entity, wandb_project, log_steps)
             check_for_optional_wandb_args(trainer_config)
+
+            wandb_config = trainer_config
+            wandb_config.update(additional_wandb_args)
+
             wandb.init(
                 entity=wandb_entity,
                 project=wandb_project,
-                config=trainer_config,
+                config=wandb_config,
                 name=trainer_config["wandb_name"],
             )
             # process save_dir in light of run name
@@ -97,10 +103,12 @@ def trainSAE(
 
                     # L0: avg number of non-zero features
                     n_nonzero_per_example = (f != 0).float().sum(dim=-1)
-                    l0 = n_nonzero_per_example.mean().item() 
+                    l0 = n_nonzero_per_example.mean().item()
                     # L0_norm: avg pct of non-zero features per example
-                    l0_norm = (n_nonzero_per_example / trainer_config["dict_size"]).mean().item() * 100
-                    
+                    l0_norm = (
+                        n_nonzero_per_example / trainer_config["dict_size"]
+                    ).mean().item() * 100
+
                     # fraction of variance explained
                     total_variance = t.var(act, dim=0).sum()
                     residual_variance = t.var(act - act_hat, dim=0).sum()
@@ -135,10 +143,10 @@ def trainSAE(
                 for name, value in trainer_log.items():
                     log[name] = value
 
-                if fidelity_fn is not None:
+                if fidelity_fn is not None and step % eval_steps == 0:
                     # Note, we assume function takes activations and returns a dict
                     # TODO: make a fidelity_fn super class that follows this API
-                    fidelity = fidelity_fn(act=act, act_hat=act_hat)
+                    fidelity = fidelity_fn(sae_model=trainer.ae)
                     for k, v in fidelity.items():
                         log[k] = v
 
@@ -162,7 +170,7 @@ def trainSAE(
                 wandb.log(log, step=step)
 
         # saving
-        if save_steps is not None and step % save_steps == 0: 
+        if save_steps is not None and step % save_steps == 0:
             t.save(
                 trainer.ae.state_dict(),
                 os.path.join(save_dir, "checkpoints", f"ae_{step}.pt"),
